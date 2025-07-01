@@ -29,6 +29,19 @@ const userschema = new mongoose.Schema({
     type: String,
     required: true,
   },
+   image: {
+    type: String,
+    default: "",
+  },
+  recentProducts: {
+  type: [String],
+  default: [],
+  },
+  searchHistory: {
+  type: [String],
+  default: [],
+  },
+
 });
 
 const user = mongoose.model("User", userschema);

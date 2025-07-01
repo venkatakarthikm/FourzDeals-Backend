@@ -22,5 +22,6 @@ productRouter.put("/product/:productId", productController.editProduct);
 // Delete product by productId
 productRouter.delete("/product/:productId", productController.deleteProduct);
 
+productRouter.get("/products/search", productController.searchProducts);
 
 module.exports = productRouter;

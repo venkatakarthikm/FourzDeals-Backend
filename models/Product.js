@@ -10,6 +10,10 @@ const productSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    productDetails: {
+        type: String,
+        required: true
+    },
     originalPrice: {
         type: Number,
         required: true // Original price before discount
@@ -35,6 +39,10 @@ const productSchema = new mongoose.Schema({
     saleType: {
         type: String, // Example: "Regular", "Sale", "Limited Edition", etc.
         default: "Regular"
+    },
+    stock:{
+        type:Number,
+        required: true
     },
     productOwner: {
         type: String, // Name or identifier of the product owner

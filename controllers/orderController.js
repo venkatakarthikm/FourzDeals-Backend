@@ -1,4 +1,6 @@
 const Order = require("../models/Order");
+const Product = require("../models/Product");
+const Cart = require("../models/Cart");
 const mongoose = require("mongoose");
 
 // Add order after successful payment
@@ -6,23 +8,20 @@ const addOrder = async (req, res) => {
   const { userId, products, totalAmount, userData, paymentDetails } = req.body;
 
   try {
-    // Ensure userId is a valid Number (if you're using Number for userId)
     if (typeof userId !== 'number') {
       return res.status(400).json({ message: "Invalid user ID." });
     }
 
-    // Validate that all payment details are provided
     if (!paymentDetails.paymentId || !paymentDetails.captureTime || !paymentDetails.amount) {
       return res.status(400).json({ message: "Payment details are incomplete." });
     }
 
-    // Create a new order
     const newOrder = new Order({
-      userId,  // Use userId as a number
+      userId,
       products: products.map(item => ({
         productId: item.productId,
         quantity: item.quantity,
-        image: item.image,  // Add image URL
+        image: item.image,
         seller: item.seller || "Unknown Seller",
       })),
       totalAmount,
@@ -35,9 +34,32 @@ const addOrder = async (req, res) => {
       createdAt: new Date(),
     });
 
-    // Save the new order
+    // Decrease stock for each product
+    for (const item of products) {
+      const product = await Product.findOne({ productId: item.productId });
+      if (!product) {
+        return res.status(404).json({ message: `Product ${item.productId} not found.` });
+      }
+      if (product.stock < item.quantity) {
+        return res.status(400).json({ message: `Insufficient stock for ${item.productId}.` });
+      }
+      product.stock -= item.quantity;
+      await product.save();
+    }
+
     await newOrder.save();
 
+
+    // Remove only bought products from cart
+    const cart = await Cart.findOne({ userId });
+    if (cart) {
+      cart.products = cart.products.filter(cartItem => {
+        return !products.some(p => p.productId === cartItem.productId);
+      });
+      await cart.save();
+    }
+
+    
     res.status(200).json({ message: "Order placed successfully!", order: newOrder });
   } catch (error) {
     console.error("Error placing order:", error);

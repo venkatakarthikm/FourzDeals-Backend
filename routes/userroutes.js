@@ -7,6 +7,10 @@ const userrouter = express.Router()
 userrouter.post("/insertuser",usercontroller.insertuser)
 userrouter.post("/checkuserlogin",usercontroller.checkuserlogin)
 userrouter.post("/checkemail",usercontroller.checkemail)
-
+userrouter.post("/recent",usercontroller.updateRecentProduct)
+userrouter.post("/users/:userId/search-history", usercontroller.saveSearchQuery);
+userrouter.get("/users/:userId/search-history", usercontroller.getSearchHistory);
+userrouter.post("/update-user", usercontroller.updateUser);
+userrouter.get("/products/recent-recommended/:username", usercontroller.getRecentAndRecommendedProducts);
 
 module.exports = userrouter

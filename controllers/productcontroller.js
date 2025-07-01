@@ -1,113 +1,86 @@
 // Backend Code: Updated multer and product handling
-
-const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
+const multer = require("multer");
+const FormData = require("form-data");
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const Product = require("../models/Product");
 const moment = require('moment-timezone');
-
 // Configure multer storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const { category, productId } = req.body;
+const upload = multer({ storage: multer.memoryStorage() }).array("productImages", 10);
 
-    // Create dynamic folder structure
-    const folderPath = path.join(
-      __dirname,
-      "../images",
-      category.toLowerCase(),
-      productId
-    );
-
-    fs.mkdirSync(folderPath, { recursive: true });
-    cb(null, folderPath);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const uniqueSuffix = crypto.randomUUID(); // Generate a unique identifier
-    cb(null, `${Date.now()}-${uniqueSuffix}${ext}`); // Unique name for each file
-  },
-});
-
-// Multer upload middleware
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-}).array("productImages", 10); // Accept up to 10 images
-
-const insertProduct = async (request, response) => {
-  upload(request, response, async (err) => {
-    if (err) {
-      return response
-        .status(400)
-        .json({ message: "Image upload failed", error: err.message });
-    }
+const insertProduct = (req, res) => {
+  upload(req, res, async (err) => {
+    if (err) return res.status(400).json({ message: "Image upload failed", error: err.message });
 
     try {
       const {
-        productId,
-        productName,
-        originalPrice,
-        priceDiscount,
-        discountValidUntil,
-        productDescription,
-        productTags,
-        category,
-        saleType,
-        customSaleName, // New field for custom sale names
-        productOwner,    // Owner of the product
-        companyName      // Company manufacturing the product
-      } = request.body;
+        productId, productName, productDetails, originalPrice, priceDiscount,
+        discountValidUntil, productDescription, productTags,
+        category, saleType, customSaleName,stock, productOwner, companyName
+      } = req.body;
 
-      const productImages = request.files.map((file) => {
-        const folderPath = path.relative(
-          path.join(__dirname, "../images"),
-          file.path
-        );
-        return `/images/${folderPath.replace(/\\/g, "/")}`;
-      });
+      // Basic validation
+      if (!productId || !productName|| !productDetails || !originalPrice || !productDescription ||!stock || !productOwner || !companyName) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
 
-      // Parse discountValidUntil in IST timezone
+      // Upload each image to FreeImage.host
+      const uploadedUrls = [];
+      for (const file of req.files) {
+        const form = new FormData();
+        form.append("key", "6d207e02198a847aa98d0a2a901485a5");
+        form.append("action", "upload");
+        form.append("source", file.buffer, {
+          filename: file.originalname,
+          contentType: file.mimetype
+        });
+        form.append("format", "json");
+
+        const resp = await fetch("https://freeimage.host/api/1/upload", {
+          method: "POST",
+          headers: form.getHeaders(),
+          body: form
+        });
+        const data = await resp.json();
+        if (data?.image?.url) uploadedUrls.push(data.image.url);
+      }
+
+      // Handle discount date and sale type
       const discountDate = discountValidUntil
         ? moment.tz(discountValidUntil, "Asia/Kolkata").toDate()
         : null;
-
-      // Handle custom sale names
       const finalSaleType = saleType === "Other" ? customSaleName : saleType;
 
       if (saleType === "Other" && !customSaleName) {
-        return response
-          .status(400)
-          .json({ message: "Custom sale name is required for 'Other' type." });
+        return res.status(400).json({ message: "Custom sale name required" });
       }
 
       const newProduct = new Product({
         productId,
         productName,
+        productDetails,
         originalPrice,
         priceDiscount: saleType === "Regular" ? 0 : priceDiscount,
         discountValidUntil: saleType === "Regular" ? null : discountDate,
         productDescription,
-        productImages,
-        productTags: Array.isArray(productTags) ? productTags : [],
+        productImages: uploadedUrls,
+        productTags: Array.isArray(productTags) ? productTags : productTags.split(",").map(t => t.trim()),
         category,
         saleType: finalSaleType,
-        productOwner,    // Include product owner
-        companyName      // Include company name
+        stock,
+        productOwner,
+        companyName
       });
 
       await newProduct.save();
-      response
-        .status(201)
-        .json({ message: "Product added successfully", product: newProduct });
+      res.status(201).json({ message: "Product added successfully", product: newProduct });
     } catch (error) {
-      response
-        .status(500)
-        .json({ message: "Failed to add product", error: error.message });
+      console.error("insertProduct error:", error);
+      res.status(500).json({ message: "Failed to add product. Please try again.", error: error.toString() });
     }
   });
 };
+
 
 // Get product by productId
 const getProductById = async (request, response) => {
@@ -166,40 +139,73 @@ const getProductsByOwner = async (req, res) => {
   }
 };
 
-// Edit product by productId
-const editProduct = async (req, res) => {
-  const { productId } = req.params;
+const editProduct = (req, res) => {
+  upload(req, res, async (err) => {
+    if (err) return res.status(400).json({ message: "Image upload failed", error: err.message });
 
-  try {
-    const product = await Product.findOne({ productId });
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
+    const { productId } = req.params;
+    try {
+      const {
+        productName,productDetails, originalPrice, priceDiscount, productDescription,
+        productTags, category, stock, saleType, customSaleName,
+        discountValidUntil, imagesToKeep
+      } = req.body;
+
+      const product = await Product.findOne({ productId });
+      if (!product) return res.status(404).json({ message: "Product not found" });
+
+      let updatedImages = imagesToKeep ? JSON.parse(imagesToKeep) : [];
+
+      // Upload new images
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          const form = new FormData();
+          form.append("key", "6d207e02198a847aa98d0a2a901485a5");
+          form.append("action", "upload");
+          form.append("source", file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+          });
+          form.append("format", "json");
+
+          const response = await fetch("https://freeimage.host/api/1/upload", {
+            method: "POST",
+            body: form,
+            headers: form.getHeaders(),
+          });
+
+          const data = await response.json();
+          if (data?.image?.url) updatedImages.push(data.image.url);
+        }
+      }
+
+      const finalSaleType = saleType === "Other" ? customSaleName : saleType;
+      const discountDate = discountValidUntil
+        ? moment.tz(discountValidUntil, "Asia/Kolkata").toDate()
+        : null;
+
+      // Update all fields
+      product.productName = productName;
+      product.productDetails= productDetails;
+      product.originalPrice = originalPrice;
+      product.priceDiscount = finalSaleType === "Regular" ? 0 : priceDiscount;
+      product.productDescription = productDescription;
+      product.productTags = typeof productTags === "string"
+        ? productTags.split(",").map(t => t.trim())
+        : productTags;
+      product.category = category;
+      product.stock = stock;
+      product.saleType = finalSaleType;
+      product.discountValidUntil = finalSaleType === "Regular" ? null : discountDate;
+      product.productImages = updatedImages;
+
+      await product.save();
+      res.status(200).json({ message: "Product updated successfully", product });
+    } catch (error) {
+      console.error("Error updating product", error);
+      res.status(500).json({ message: "Error updating product", error: error.message });
     }
-
-    // Update fields
-    product.productName = req.body.productName || product.productName;
-    product.originalPrice = req.body.originalPrice || product.originalPrice;
-    product.priceDiscount = req.body.priceDiscount || product.priceDiscount;
-    product.discountValidUntil = req.body.discountValidUntil || product.discountValidUntil;
-    product.productDescription = req.body.productDescription || product.productDescription;
-    product.productTags = req.body.productTags || product.productTags;
-    product.category = req.body.category || product.category;
-    product.saleType = req.body.saleType || product.saleType;
-    product.companyName = req.body.companyName || product.companyName;
-
-    // If images were uploaded, update them
-    if (req.files && req.files.length) {
-      product.productImages = req.files.map((file) => {
-        const folderPath = path.relative(path.join(__dirname, "../images"), file.path);
-        return `/images/${folderPath.replace(/\\/g, "/")}`;
-      });
-    }
-
-    await product.save();
-    res.status(200).json({ message: "Product updated successfully", product });
-  } catch (error) {
-    res.status(500).json({ message: "Error updating product", error: error.message });
-  }
+  });
 };
 
 const deleteProduct = async (req, res) => {
@@ -212,20 +218,6 @@ const deleteProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    // Delete associated image files
-    product.productImages.forEach((imagePath) => {
-      const imageFilePath = path.join(__dirname, "..", imagePath);
-      if (fs.existsSync(imageFilePath)) {
-        fs.unlinkSync(imageFilePath); // Delete image file
-      }
-    });
-
-    // Delete the product folder
-    const folderPath = path.join(__dirname, "../images", product.category.toLowerCase(), product.productId);
-    if (fs.existsSync(folderPath)) {
-      fs.rmdirSync(folderPath, { recursive: true }); // Delete the product folder
-    }
-
     // Remove the product using deleteOne()
     await Product.deleteOne({ productId }); // Use the model to delete the product
     res.status(200).json({ message: "Product deleted successfully" });
@@ -234,7 +226,24 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+const searchProducts = async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ message: "Missing search query" });
 
+  try {
+    const products = await Product.find({
+      $or: [
+        { productName: { $regex: query, $options: "i" } },
+        { productTags: { $regex: query, $options: "i" } },
+        { productDescription: { $regex: query, $options: "i" } },
+      ],
+    }).select("productId productName originalPrice priceDiscount productImages");
+
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: "Search error", error: error.message });
+  }
+};
 
 module.exports = {
   insertProduct,
@@ -244,4 +253,5 @@ module.exports = {
   getProductsByOwner,
   editProduct,
   deleteProduct,
+  searchProducts,
 };
