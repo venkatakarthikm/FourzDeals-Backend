@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const cron = require('node-cron'); // Import node-cron
 require('dotenv').config();
+require("./jobs/scheduler");
 const path = require("path");
 
 const dburl = process.env.mongodburl;

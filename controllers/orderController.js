@@ -2,6 +2,7 @@ const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Cart = require("../models/Cart");
 const mongoose = require("mongoose");
+const { sendNotification } = require("../utils/oneSignal");
 
 // Add order after successful payment
 const addOrder = async (req, res) => {
@@ -48,6 +49,13 @@ const addOrder = async (req, res) => {
     }
 
     await newOrder.save();
+    await sendNotification({
+  userId,
+  heading: `Thanks ${userData.username}!`,
+  message: `Order placed successfully.`,
+  image: newOrder.products?.[0]?.image || "",
+  deepLink: `/orders`
+});
 
 
     // Remove only bought products from cart
